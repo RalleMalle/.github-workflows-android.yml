@@ -32,7 +32,14 @@ jobs:
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           gradle assembleRelease --no-daemon
 
+            - name: APK einsammeln
+        run: |
+          mkdir -p "$RUNNER_TEMP/apk"
+          find . -path "*/build/outputs/apk/release/*.apk" -exec cp {} "$RUNNER_TEMP/apk/Streckenkilometer.apk" \;
+          ls -la "$RUNNER_TEMP/apk"
+
       - uses: actions/upload-artifact@v4
         with:
           name: Streckenkilometer-APK
-          path: '**/build/outputs/apk/release/*.apk'
+          path: ${{ runner.temp }}/apk/*.apk
+          include-hidden-files: true
