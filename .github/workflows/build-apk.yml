@@ -22,17 +22,11 @@ jobs:
       - name: APK bauen
         run: |
           SETTINGS=$(find . -name settings.gradle -not -path "./.git/*" | head -1)
-          if [ -z "$SETTINGS" ]; then
-            echo "FEHLER: settings.gradle nicht gefunden. Dateien im Repository:"
-            find . -not -path "./.git/*" -maxdepth 3
-            exit 1
-          fi
           cd "$(dirname "$SETTINGS")"
-          echo "Projekt gefunden in: $(pwd)"
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           gradle assembleRelease --no-daemon
 
-            - name: APK einsammeln
+      - name: APK einsammeln
         run: |
           mkdir -p "$RUNNER_TEMP/apk"
           find . -path "*/build/outputs/apk/release/*.apk" -exec cp {} "$RUNNER_TEMP/apk/Streckenkilometer.apk" \;
