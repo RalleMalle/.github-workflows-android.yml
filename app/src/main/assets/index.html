@@ -651,6 +651,24 @@ function hav(a,b){const R=6371000,t=Math.PI/180,dLa=(b[0]-a[0])*t,dLo=(b[1]-a[1]
 
 if(!window.L){$('map').innerHTML='<div class="mapnote"><div><b>Die Kartenbibliothek konnte nicht geladen werden.</b><br>Datei herunterladen und per Doppelklick in Chrome, Edge oder Firefox öffnen.</div></div>';throw new Error('Leaflet fehlt')}
 const AREA=DATA.poly.map(([lo,la])=>[la,lo]),AREA2=(DATA.poly2||[]).map(([lo,la])=>[la,lo]),REGIONS=[AREA,AREA2].filter(a=>a.length);
+
+/* Nur sichtbare Punkte zeichnen (verhindert Hänger/Absturz beim Reinzoomen) */
+const CullGroup=L.LayerGroup.extend({
+  initialize(cap){L.LayerGroup.prototype.initialize.call(this);this._all=new Set();this._cap=cap||600},
+  addLayer(l){this._all.add(l);if(this._map)this._sched();return this},
+  removeLayer(l){this._all.delete(l);if(L.LayerGroup.prototype.hasLayer.call(this,l))L.LayerGroup.prototype.removeLayer.call(this,l);return this},
+  clearLayers(){this._all.clear();L.LayerGroup.prototype.clearLayers.call(this);return this},
+  hasLayer(l){return this._all.has(l)},
+  eachLayer(fn,ctx){this._all.forEach(l=>fn.call(ctx,l));return this},
+  getLayers(){return [...this._all]},
+  onAdd(m){this._map=m;m.on('moveend zoomend',this._sched,this);this._refresh()},
+  onRemove(m){m.off('moveend zoomend',this._sched,this);clearTimeout(this._t);for(const id in this._layers)m.removeLayer(this._layers[id]);this._layers={};this._map=null},
+  _sched(){clearTimeout(this._t);this._t=setTimeout(()=>this._refresh(),80)},
+  _refresh(){const m=this._map;if(!m)return;const b=m.getBounds().pad(0.2),want=new Set();let n=0;
+    for(const l of this._all){if(n>=this._cap)break;const ll=l.getLatLng&&l.getLatLng();if(ll&&b.contains(ll)){want.add(l);n++}}
+    for(const id in this._layers){const l=this._layers[id];if(!want.has(l))L.LayerGroup.prototype.removeLayer.call(this,l)}
+    want.forEach(l=>{if(!L.LayerGroup.prototype.hasLayer.call(this,l))L.LayerGroup.prototype.addLayer.call(this,l)})}
+});
 const map=L.map('map',{maxBounds:L.latLngBounds([47,3],[58,20]),maxBoundsViscosity:0.3,minZoom:6,zoomSnap:0.5});
 const goRegion=(i,anim)=>{const m=innerWidth<=820?document.querySelector('main').clientHeight*.46:0;map[anim?'flyToBounds':'fitBounds'](L.latLngBounds(REGIONS[i]||AREA),{paddingTopLeft:[20,20],paddingBottomRight:[20,m+20],duration:1.2})};
 let curReg=0;try{curReg=+(localStorage.getItem('region')||0)||0}catch(e){}
@@ -814,7 +832,7 @@ STN.forEach(s=>L.marker(s.ll,{icon:L.divIcon({className:'',html:`<div style="wid
   .bindPopup(()=>{const rs=REFS.filter(r=>{const x=nearestSeg(graph(r),s.ll);return x&&x.d<100});return `<b>${esc(s.name)}</b><br>${esc(s.kind)}${s.ds100?' · '+esc(s.ds100):''}<br>Strecken: ${rs.map(esc).join(', ')}<br>Linien: ${servicesNear(s.ll,120).map(x=>esc(x.ref)).join(', ')||'–'}<br><a href="#" data-tt="${s.ll[0]},${s.ll[1]}" data-lbl="${esc(s.name)}">Fahrplan</a> · <a href="#" data-route="${s.ll[0]},${s.ll[1]}" data-lbl="${esc(s.name)}">Route hierhin</a>`})
   .addTo(laySt));
 let layAllKm=null,layAllLbl=null;
-function buildAllKm(){layAllKm=L.layerGroup();layAllLbl=L.layerGroup();
+function buildAllKm(){layAllKm=new CullGroup(700);layAllLbl=new CullGroup(350);
   for(const r of REFS){if(r==='HPA')continue;let g;try{g=graph(r)}catch(e){continue}
     g.anchors.forEach(a=>{L.circleMarker(a.ll,{radius:5,color:'#000',weight:1.5,fillColor:'#fff',fillOpacity:1}).bindTooltip(`Strecke ${esc(LBL(r))} · km ${fmtKm(a.km)}`).bindPopup(()=>anchorInfo(r,a),{minWidth:230}).addTo(layAllKm);
       L.marker(a.ll,{opacity:0,interactive:false,keyboard:false}).bindTooltip(fmtKm1(a.km),{permanent:true,direction:'right',offset:[4,0],className:'kmlbl'}).addTo(layAllLbl)})}}
@@ -1331,7 +1349,7 @@ function swInfo(w){const wl=whereOnLine(w.ll),km=w.pos?pk(w.pos):wl&&wl.km;const
 function lcInfo(c){const wl=whereOnLine(c.ll),km=c.pos?pk(c.pos):wl&&wl.km,si=lcSich(c.x);const lbl=(c.ped?'Überweg':'BÜ')+(c.ref?' '+c.ref:'')+(c.road?' '+c.road:'');
   return `<b>${c.ped?'Fußgänger-/Reisendenüberweg':'Bahnübergang'}${c.ref?' '+esc(c.ref):''}</b><br>${c.road?'Straße: <b>'+esc(c.road)+'</b><br>':''}${wl?'Strecke '+esc(LBL(wl.r))+' · '+esc(NAME(wl.r))+'<br>':''}${km!=null&&!isNaN(km)?'km <b>'+fmtKm(km)+'</b>'+(c.pos?'':' (berechnet)')+'<br>':''}<span style="color:${si.tech?'#1a7f3c':'#b30f14'};font-weight:700">${si.tech?'technisch gesichert':'nicht technisch gesichert'}</span><br><span style="font-size:12px">${esc(si.txt)}${c.op?' · '+esc(c.op):''}</span><br><small>${c.ll[0].toFixed(6)}, ${c.ll[1].toFixed(6)}</small>`+actions(c.ll,lbl)}
 map.createPane('infra');map.getPane('infra').style.zIndex=450;const cvs=L.svg({padding:.3,pane:'infra'});
-const laySw=L.layerGroup(),layLc=L.layerGroup(),layPed=L.layerGroup();
+const laySw=new CullGroup(900),layLc=new CullGroup(500),layPed=new CullGroup(400);
 SWL.forEach(w=>L.circleMarker(w.ll,{renderer:cvs,pane:'infra',radius:5.5,color:'#111',weight:1.5,fillColor:'#ffd400',fillOpacity:1}).bindPopup(()=>swInfo(w),{minWidth:220}).bindTooltip(()=>'Weiche '+(w.ref||'')).addTo(laySw));
 RCL.forEach(c=>L.circleMarker(c.ll,{renderer:cvs,pane:'infra',radius:5,color:'#111',weight:1.5,fillColor:'#fff',fillOpacity:1}).bindPopup(()=>{const wl=whereOnLine(c.ll);return `<b>Gleiskreuzung</b><br>${wl?'Strecke '+esc(LBL(wl.r))+(wl.km!=null?' · km '+fmtKm(wl.km):''):''}`}).addTo(laySw));
 /* ---------- Unsere Orte ---------- */
