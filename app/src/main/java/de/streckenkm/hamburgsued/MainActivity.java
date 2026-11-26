@@ -11,6 +11,8 @@ import android.os.Bundle;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.GeolocationPermissions;
+import android.webkit.RenderProcessGoneDetail;
+import android.widget.FrameLayout;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -48,6 +50,8 @@ public class MainActivity extends AppCompatActivity {
             "try{Object.defineProperty(navigator,'wakeLock',{value:api,configurable:true});}catch(e){}})();";
 
     private WebView webView;
+    private FrameLayout root;
+    private boolean rendererGone = false;
     private WebViewAssetLoader assetLoader;
     private boolean docStartScriptInstalled = false;
 
@@ -70,12 +74,12 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        webView = new WebView(this);
-        webView.setBackgroundColor(Color.parseColor("#101112"));
-        setContentView(webView);
+        root = new FrameLayout(this);
+        root.setBackgroundColor(Color.parseColor("#101112"));
+        setContentView(root);
 
         // Inhalt nicht unter Statusleiste / Navigationsleiste legen
-        ViewCompat.setOnApplyWindowInsetsListener(webView, (View v, WindowInsetsCompat insets) -> {
+        ViewCompat.setOnApplyWindowInsetsListener(root, (View v, WindowInsetsCompat insets) -> {
             Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()
                     | WindowInsetsCompat.Type.displayCutout()
                     | WindowInsetsCompat.Type.ime());
@@ -87,6 +91,34 @@ public class MainActivity extends AppCompatActivity {
                 .setDomain(HOST)
                 .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
                 .build();
+
+        createWebView();
+
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (webView != null && webView.canGoBack()) {
+                    webView.goBack();
+                } else {
+                    setEnabled(false);
+                    getOnBackPressedDispatcher().onBackPressed();
+                }
+            }
+        });
+
+        if (savedInstanceState == null || webView.restoreState(savedInstanceState) == null) {
+            webView.loadUrl(START_URL);
+        }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private void createWebView() {
+        webView = new WebView(this);
+        webView.setBackgroundColor(Color.parseColor("#101112"));
+        root.addView(webView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        rendererGone = false;
+        docStartScriptInstalled = false;
 
         WebSettings s = webView.getSettings();
         s.setJavaScriptEnabled(true);
@@ -126,6 +158,21 @@ public class MainActivity extends AppCompatActivity {
             public void onPageFinished(WebView view, String url) {
                 if (!docStartScriptInstalled) view.evaluateJavascript(WAKELOCK_POLYFILL, null);
             }
+
+            // Karte hat zu viel Speicher gebraucht: neu laden statt App-Absturz
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                if (view != webView) return true;
+                rendererGone = true;
+                root.removeView(view);
+                view.destroy();
+                webView = null;
+                root.post(() -> {
+                    createWebView();
+                    webView.loadUrl(START_URL);
+                });
+                return true;
+            }
         });
 
         webView.setWebChromeClient(new WebChromeClient() {
@@ -143,23 +190,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
-            @Override
-            public void handleOnBackPressed() {
-                if (webView.canGoBack()) {
-                    webView.goBack();
-                } else {
-                    setEnabled(false);
-                    getOnBackPressedDispatcher().onBackPressed();
-                }
-            }
-        });
-
-        if (savedInstanceState != null) {
-            webView.restoreState(savedInstanceState);
-        } else {
-            webView.loadUrl(START_URL);
-        }
     }
 
     private boolean hasLocationPermission() {
@@ -187,18 +217,18 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
-        webView.saveState(outState);
+        if (webView != null && !rendererGone) webView.saveState(outState);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        webView.onResume();
+        if (webView != null) webView.onResume();
     }
 
     @Override
     protected void onPause() {
-        webView.onPause();
+        if (webView != null) webView.onPause();
         super.onPause();
     }
 
